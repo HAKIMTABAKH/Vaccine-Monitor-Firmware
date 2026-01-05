@@ -5,7 +5,9 @@
 #include "freertos/queue.h"
 #include "esp_log.h" // The native logging library
 #include "types.h"
-
+#include "esp_spiffs.h"
+#include <sys/stat.h>
+#include <sys/unistd.h>
 
 //---CONSTANTS---//
 #define SENSOR_TASK_STACK_SIZE 4096
@@ -55,20 +57,73 @@ void task_storage(void *pvParametres)
     while (1){
         // Wait forever for data
         if(xQueueReceive(data_queue, &received_packet, portMAX_DELAY) == pdPASS){
-            // Log reception
-            ESP_LOGI(TAG_STORAGE, "Processing Packet TS: %lu | Temp: %.2f C",
-                     received_packet.timestamp,
-                     received_packet.temperature);
-            // In Week 2, we will add fwrite() here.
+
+            // 2. Open File in APPEND + BINARY mode("ab")
+            //  If we used "w", it would delete the file every time.
+            FILE *f =fopen("/spiffs/vaccine_data.bin", "ab");
+            if (f == NULL){
+                ESP_LOGE(TAG_STORAGE, "Failed to open file for writing");
+                continue;
+            }
+            // 3. Write Raw Bytes
+            // fwrite(pointer_to_data, size_of_one_element, count, file_handle)
+            size_t written = fwrite(&received_packet, sizeof(vaccine_data_t), 1, f);
+
+            // 4. Close immediately to save data
+            fclose(f);
+
+            // 5. Verification Log
+            if (written == 1){
+                ESP_LOGI(TAG_STORAGE, "SAVED to Flash: TS %lu | Temp %.2f",
+                         (unsigned long)received_packet.timestamp, received_packet.temperature);
+            } else {
+                ESP_LOGE(TAG_STORAGE, "Failed to write data to file");
+            }
         }
     }
    
 }
+
+// Function to mount the file system
+void init_spiffs(void)
+{
+   ESP_LOGI(TAG_MAIN, "Initializing SPIFFS");
+   esp_vfs_spiffs_conf_t conf = {
+       .base_path = "/spiffs",       // Root directory
+       .partition_label = "storage", // MUST match partitions.csv name
+       .max_files = 5,
+       .format_if_mount_failed = true // Format on first run (Important!)
+   };
+   // Register the File System
+   esp_err_t ret = esp_vfs_spiffs_register(&conf);
+   if (ret !=ESP_OK){
+    if (ret ==ESP_FAIL){
+        ESP_LOGI(TAG_MAIN, "Failed to mount or format filesystem");
+    }
+    else if (ret == ESP_ERR_NOT_FOUND){
+        ESP_LOGI(TAG_MAIN, "Failed to find SPIFFS partition");
+    }
+    else {
+        ESP_LOGI(TAG_MAIN, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+    }
+    return;
+   }
+    size_t total = 0, used = 0;
+    ret= esp_spiffs_info(conf.partition_label, &total, &used);
+    if (ret != ESP_OK){
+        ESP_LOGI(TAG_MAIN,"Failed to get SPIFFS partition information");
+    }else{
+        ESP_LOGI(TAG_MAIN, "SPIFFS Partition size: total: %d, used: %d", total, used);
+    }
+}
 // --- MAIN ENTRY POINT ---
 void app_main(void)
-{
+{ 
+    // ... Logs init ...
     ESP_LOGI(TAG_MAIN, "System Starting: SCCVM-v1");
     // 1. Create Queue
+    // MOUNT FILESYSTEM FIRST
+    init_spiffs();
     data_queue = xQueueCreate(QUEUE_LENGTH, sizeof(vaccine_data_t));
     if (data_queue == NULL)
     {
