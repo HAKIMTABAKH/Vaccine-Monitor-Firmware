@@ -116,7 +116,35 @@ void init_spiffs(void)
         ESP_LOGI(TAG_MAIN, "SPIFFS Partition size: total: %d, used: %d", total, used);
     }
 }
-// --- MAIN ENTRY POINT ---
+
+void read_past_data(void)
+{
+    ESP_LOGI(TAG_MAIN, "Reading archived data from Flash...");
+    // 1. Open for READING in BINARY mode ("rb")
+    FILE *f = fopen("/spiffs/vaccine_data.bin", "rb");
+
+    if (f == NULL){
+        ESP_LOGI(TAG_MAIN, "No history found (File does not exist yet).");
+        return;
+    }
+    vaccine_data_t packet;
+    int count = 0;
+
+    // 2. Loop through the file, reading one struct at a time
+    // fread returns the number of items successfully read.
+    // When it hits the end of the file, it returns 0, and the loop stops.
+    while (fread(&packet, sizeof(vaccine_data_t), 1, f) ==1){
+        ESP_LOGI(TAG_MAIN, "[HISTORY] TS: %lu | Temp: %.2f C",
+                 (unsigned long)packet.timestamp, packet.temperature);
+        count++;
+    }
+    fclose(f);
+    ESP_LOGI(TAG_MAIN, "Total packets retrieved: %d", count);
+}
+
+
+
+// --- MAIN ENTRY POINT ---//
 void app_main(void)
 { 
     // ... Logs init ...
@@ -124,6 +152,9 @@ void app_main(void)
     // 1. Create Queue
     // MOUNT FILESYSTEM FIRST
     init_spiffs();
+    // NEW: Read history before we start adding new data
+    read_past_data();
+    
     data_queue = xQueueCreate(QUEUE_LENGTH, sizeof(vaccine_data_t));
     if (data_queue == NULL)
     {
