@@ -45,14 +45,14 @@ The firmware follows a **Producer–Consumer architecture** using FreeRTOS primi
 
 ```mermaid
 graph TD
-    A[Sensor Task] -->|Acquire Data|
-    B[Vaccine Data Packet] -->|xQueueSend|
-    C[FreeRTOS Queue] -->|xQueueReceive|
-    D[Storage Task] -->|Binary Append|
-    E[SPIFFS Flash] D -->|Publish|
+    A[Sensor Task]-->|Acquire Data|
+    B[Vaccine Data Packet]-->|xQueueSend|
+    C[FreeRTOS Queue]-->|xQueueReceive|
+    D[Storage Task]-->|Binary Append|
+    E[SPIFFS Flash] D-->|Publish|
     F[MQTT Task] -->|TLS 1.2|
-    G[Cloud Broker] -->|WebSockets|
-     H[Web Dashboard]
+    G[Cloud Broker]-->|WebSockets|
+    H[Web Dashboard]
 
 ````
 
