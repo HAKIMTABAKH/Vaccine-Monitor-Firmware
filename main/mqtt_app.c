@@ -55,14 +55,14 @@ void mqtt_app_start(void)
 }
 
 // Function to publish data
-void mqtt_send_data(float temp, uint32_t timestamp)
+void mqtt_send_data(float temp, float humidity, uint32_t timestamp, uint8_t battery_level, uint8_t status_flags)
 {
     if (client == NULL)
         return;
 
     char payload[100];
-    // Create a JSON string: {"ts": 12345, "temp": 5.5}
-    snprintf(payload, sizeof(payload), "{\"ts\":%lu,\"temp\":%.2f}", (unsigned long)timestamp, temp);
+    // Create a JSON string: {"ts": 12345, "temp": 5.5, "humidity": 50.00, "battery_level": 98, "status_flags": 0}
+    snprintf(payload, sizeof(payload), "{\"ts\":%lu,\"temp\":%.2f,\"humidity\":%.2f,\"battery_level\":%u,\"status_flags\":%u}", (unsigned long)timestamp, temp, humidity, battery_level, status_flags);
 
     // Topic: sccvm/device_001/data
     // msg_id = esp_mqtt_client_publish(client, topic, data, len, qos, retain)

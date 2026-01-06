@@ -72,7 +72,7 @@ void task_storage(void *pvParametres)
             // 2. SEND to Cloud (New code)
             // Note: In a real system, we might use a separate 'Cloud Task',
             // but for now, calling it here works.
-            mqtt_send_data(received_packet.temperature, received_packet.timestamp);
+            mqtt_send_data(received_packet.temperature, received_packet.humidity, received_packet.timestamp, received_packet.battery_level, received_packet.status_flags);
 
             // 3. Write Raw Bytes
             // fwrite(pointer_to_data, size_of_one_element, count, file_handle)
