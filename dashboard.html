@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCCVM Command Center</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1a1a1a;
+            color: #00ff00;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            border: 2px solid #333;
+            padding: 20px;
+            background: #000;
+        }
+
+        h1 {
+            text-align: center;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+        }
+
+        .status {
+            font-size: 14px;
+            color: #888;
+            text-align: right;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #444;
+        }
+
+        .label {
+            font-size: 20px;
+            color: #aaa;
+        }
+
+        .value {
+            font-size: 40px;
+            font-weight: bold;
+        }
+
+        .alert-box {
+            background: #330000;
+            color: #ff4444;
+            padding: 10px;
+            text-align: center;
+            display: none;
+            border: 1px solid red;
+            font-weight: bold;
+        }
+
+        .log-container {
+            height: 200px;
+            overflow-y: scroll;
+            border-top: 1px solid #333;
+            margin-top: 20px;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .log-entry {
+            margin: 2px 0;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h1>VACCINE MONITOR v1</h1>
+        <div class="status" id="connectionStatus">Connecting to Cloud...</div>
+
+        <div id="alertBox" class="alert-box">⚠️ CRITICAL TEMP ALERT (>8.0°C) ⚠️</div>
+
+        <div class="card">
+            <span class="label">TEMPERATURE</span>
+            <span class="value" id="tempValue">--.-°C</span>
+        </div>
+
+        <div class="card">
+            <span class="label">HUMIDITY</span>
+            <span class="value" id="humidityValue">--.-%</span>
+        </div>
+
+        <div class="card">
+            <span class="label">BATTERY LEVEL</span>
+            <span class="value" id="batteryValue">--%</span>
+        </div>
+
+        <div class="card">
+            <span class="label">STATUS FLAGS</span>
+            <span class="value" id="statusValue">--</span>
+        </div>
+
+        <div class="card">
+            <span class="label">LAST SYNC</span>
+            <span class="value" id="timeValue">--:--:--</span>
+        </div>
+
+        <div class="log-container" id="logBox">
+            <!-- Logs go here -->
+        </div>
+    </div>
+
+    <script>
+        // CONFIGURATION
+        const BROKER = "broker.emqx.io";
+        const PORT = 8084; // WSS (Secure WebSockets)
+        const TOPIC = "sccvm/device_001/data";
+        const CLIENT_ID = "web_dashboard_" + Math.random().toString(16).substr(2, 8);
+
+        // Initialize Client
+        client = new Paho.MQTT.Client(BROKER, PORT, CLIENT_ID);
+
+        // Callbacks
+        client.onConnectionLost = onConnectionLost;
+        client.onMessageArrived = onMessageArrived;
+
+        // Connect options
+        const options = {
+            useSSL: true,
+            onSuccess: onConnect,
+            onFailure: onFail
+        };
+
+        // Connect
+        console.log("Connecting...");
+        client.connect(options);
+
+        function onConnect() {
+            document.getElementById("connectionStatus").innerText = "🟢 SYSTEM ONLINE";
+            document.getElementById("connectionStatus").style.color = "#00ff00";
+            console.log("Connected");
+            client.subscribe(TOPIC);
+        }
+
+        function onFail(e) {
+            document.getElementById("connectionStatus").innerText = "🔴 CONNECTION FAILED";
+            console.log(e);
+        }
+
+        function onConnectionLost(responseObject) {
+            if (responseObject.errorCode !== 0) {
+                console.log("Connection Lost: " + responseObject.errorMessage);
+                document.getElementById("connectionStatus").innerText = "🟠 SIGNAL LOST";
+            }
+        }
+
+        function onMessageArrived(message) {
+            const payload = message.payloadString;
+            console.log("Data: " + payload);
+
+            try {
+                const data = JSON.parse(payload);
+                updateUI(data);
+                addLog(payload);
+            } catch (e) {
+                console.error("Invalid JSON");
+            }
+        }
+
+        function updateUI(data) {
+            // Update Temperature
+            const tempEl = document.getElementById("tempValue");
+            tempEl.innerText = data.temp.toFixed(2) + "°C";
+
+            // Update Humidity
+            const humidityEl = document.getElementById("humidityValue");
+            humidityEl.innerText = data.humidity.toFixed(2) + "%";
+
+            // Update Battery Level
+            const batteryEl = document.getElementById("batteryValue");
+            batteryEl.innerText = data.battery_level.toFixed(0) + "%";
+
+            // Update Status Flags
+            const statusEl = document.getElementById("statusValue");
+            statusEl.innerText = data.status_flags;
+
+            // Update Time
+            const date = new Date(data.ts * 1000);
+            document.getElementById("timeValue").innerText = date.toLocaleTimeString();
+
+            // LOGIC: RED ALERT
+            const alertBox = document.getElementById("alertBox");
+            if (data.temp > 8.0) {
+                alertBox.style.display = "block";
+                tempEl.style.color = "#ff4444";
+            } else {
+                alertBox.style.display = "none";
+                tempEl.style.color = "#00ff00";
+            }
+        }
+
+        function addLog(msg) {
+            const logBox = document.getElementById("logBox");
+            const entry = document.createElement("div");
+            entry.className = "log-entry";
+            entry.innerText = "> " + msg;
+            logBox.prepend(entry);
+        }
+    </script>
+
+</body>
+
+</html>

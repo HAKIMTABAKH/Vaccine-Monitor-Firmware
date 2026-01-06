@@ -5,7 +5,12 @@
 #include "freertos/queue.h"
 #include "esp_log.h" // The native logging library
 #include "types.h"
-
+#include "esp_spiffs.h"
+#include <sys/stat.h>
+#include <sys/unistd.h>
+#include "nvs_flash.h"
+#include "wifi_connect.h"
+#include "mqtt_app.h"
 
 //---CONSTANTS---//
 #define SENSOR_TASK_STACK_SIZE 4096
@@ -55,27 +60,122 @@ void task_storage(void *pvParametres)
     while (1){
         // Wait forever for data
         if(xQueueReceive(data_queue, &received_packet, portMAX_DELAY) == pdPASS){
-            // Log reception
-            ESP_LOGI(TAG_STORAGE, "Processing Packet TS: %lu | Temp: %.2f C",
-                     received_packet.timestamp,
-                     received_packet.temperature);
-            // In Week 2, we will add fwrite() here.
+
+            // 2. Open File in APPEND + BINARY mode("ab")
+            //  If we used "w", it would delete the file every time.
+            FILE *f =fopen("/spiffs/vaccine_data.bin", "ab");
+            if (f == NULL){
+                ESP_LOGE(TAG_STORAGE, "Failed to open file for writing");
+                continue;
+            }
+
+            // 2. SEND to Cloud (New code)
+            // Note: In a real system, we might use a separate 'Cloud Task',
+            // but for now, calling it here works.
+            mqtt_send_data(received_packet.temperature, received_packet.humidity, received_packet.timestamp, received_packet.battery_level, received_packet.status_flags);
+
+            // 3. Write Raw Bytes
+            // fwrite(pointer_to_data, size_of_one_element, count, file_handle)
+            size_t written = fwrite(&received_packet, sizeof(vaccine_data_t), 1, f);
+
+            // 4. Close immediately to save data
+            fclose(f);
+
         }
     }
    
 }
-// --- MAIN ENTRY POINT ---
-void app_main(void)
+
+// Function to mount the file system
+void init_spiffs(void)
 {
+   ESP_LOGI(TAG_MAIN, "Initializing SPIFFS");
+   esp_vfs_spiffs_conf_t conf = {
+       .base_path = "/spiffs",       // Root directory
+       .partition_label = "storage", // MUST match partitions.csv name
+       .max_files = 5,
+       .format_if_mount_failed = true // Format on first run (Important!)
+   };
+   // Register the File System
+   esp_err_t ret = esp_vfs_spiffs_register(&conf);
+   if (ret !=ESP_OK){
+    if (ret ==ESP_FAIL){
+        ESP_LOGI(TAG_MAIN, "Failed to mount or format filesystem");
+    }
+    else if (ret == ESP_ERR_NOT_FOUND){
+        ESP_LOGI(TAG_MAIN, "Failed to find SPIFFS partition");
+    }
+    else {
+        ESP_LOGI(TAG_MAIN, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+    }
+    return;
+   }
+    size_t total = 0, used = 0;
+    ret= esp_spiffs_info(conf.partition_label, &total, &used);
+    if (ret != ESP_OK){
+        ESP_LOGI(TAG_MAIN,"Failed to get SPIFFS partition information");
+    }else{
+        ESP_LOGI(TAG_MAIN, "SPIFFS Partition size: total: %d, used: %d", total, used);
+    }
+}
+
+void read_past_data(void)
+{
+    ESP_LOGI(TAG_MAIN, "Reading archived data from Flash...");
+    // 1. Open for READING in BINARY mode ("rb")
+    FILE *f = fopen("/spiffs/vaccine_data.bin", "rb");
+
+    if (f == NULL){
+        ESP_LOGI(TAG_MAIN, "No history found (File does not exist yet).");
+        return;
+    }
+    vaccine_data_t packet;
+    int count = 0;
+
+    // 2. Loop through the file, reading one struct at a time
+    // fread returns the number of items successfully read.
+    // When it hits the end of the file, it returns 0, and the loop stops.
+    while (fread(&packet, sizeof(vaccine_data_t), 1, f) ==1){
+        ESP_LOGI(TAG_MAIN, "[HISTORY] TS: %lu | Temp: %.2f C",
+                 (unsigned long)packet.timestamp, packet.temperature);
+        count++;
+    }
+    fclose(f);
+    ESP_LOGI(TAG_MAIN, "Total packets retrieved: %d", count);
+}
+
+
+
+// --- MAIN ENTRY POINT ---//
+void app_main(void)
+{ 
+    // ... Logs init ...
     ESP_LOGI(TAG_MAIN, "System Starting: SCCVM-v1");
-    // 1. Create Queue
+
+    // 1. Initialize NVS (Needed for Wi-Fi)
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND){
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+    // 2. Connect to Wi-Fi (Blocking Call - waits until connected)
+    wifi_init_sta();
+
+    mqtt_app_start(); // Start background MQTT task
+
+    // 3. MOUNT FILESYSTEM FIRST
+    init_spiffs();
+    // NEW: Read history before we start adding new data
+    read_past_data();
+    // 4. Create Queue
     data_queue = xQueueCreate(QUEUE_LENGTH, sizeof(vaccine_data_t));
     if (data_queue == NULL)
     {
         ESP_LOGE(TAG_MAIN, "Failed to create queue");
         return;
     }
-    // 2. Create Tasks
+    // 5. Create Tasks
      xTaskCreatePinnedToCore(task_sensor, "Sensor Task", SENSOR_TASK_STACK_SIZE, NULL,5,NULL,1);
      xTaskCreatePinnedToCore(task_storage, "Storage Task", STORAGE_TASK_STACK_SIZE, NULL, 3, NULL, 1);
      ESP_LOGI(TAG_MAIN, "Tasks Created. Main ending (scheduler handles the rest).");
