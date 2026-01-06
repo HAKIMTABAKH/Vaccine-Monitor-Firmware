@@ -10,7 +10,7 @@
 #include <sys/unistd.h>
 #include "nvs_flash.h"
 #include "wifi_connect.h"
-
+#include "mqtt_app.h"
 
 //---CONSTANTS---//
 #define SENSOR_TASK_STACK_SIZE 4096
@@ -68,6 +68,12 @@ void task_storage(void *pvParametres)
                 ESP_LOGE(TAG_STORAGE, "Failed to open file for writing");
                 continue;
             }
+
+            // 2. SEND to Cloud (New code)
+            // Note: In a real system, we might use a separate 'Cloud Task',
+            // but for now, calling it here works.
+            mqtt_send_data(received_packet.temperature, received_packet.timestamp);
+
             // 3. Write Raw Bytes
             // fwrite(pointer_to_data, size_of_one_element, count, file_handle)
             size_t written = fwrite(&received_packet, sizeof(vaccine_data_t), 1, f);
@@ -75,13 +81,6 @@ void task_storage(void *pvParametres)
             // 4. Close immediately to save data
             fclose(f);
 
-            // 5. Verification Log
-            if (written == 1){
-                ESP_LOGI(TAG_STORAGE, "SAVED to Flash: TS %lu | Temp %.2f",
-                         (unsigned long)received_packet.timestamp, received_packet.temperature);
-            } else {
-                ESP_LOGE(TAG_STORAGE, "Failed to write data to file");
-            }
         }
     }
    
@@ -162,6 +161,8 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
     // 2. Connect to Wi-Fi (Blocking Call - waits until connected)
     wifi_init_sta();
+
+    mqtt_app_start(); // Start background MQTT task
 
     // 3. MOUNT FILESYSTEM FIRST
     init_spiffs();
