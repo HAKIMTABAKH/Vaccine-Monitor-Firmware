@@ -8,6 +8,9 @@
 #include "esp_spiffs.h"
 #include <sys/stat.h>
 #include <sys/unistd.h>
+#include "nvs_flash.h"
+#include "wifi_connect.h"
+
 
 //---CONSTANTS---//
 #define SENSOR_TASK_STACK_SIZE 4096
@@ -149,19 +152,29 @@ void app_main(void)
 { 
     // ... Logs init ...
     ESP_LOGI(TAG_MAIN, "System Starting: SCCVM-v1");
-    // 1. Create Queue
-    // MOUNT FILESYSTEM FIRST
+
+    // 1. Initialize NVS (Needed for Wi-Fi)
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND){
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+    // 2. Connect to Wi-Fi (Blocking Call - waits until connected)
+    wifi_init_sta();
+
+    // 3. MOUNT FILESYSTEM FIRST
     init_spiffs();
     // NEW: Read history before we start adding new data
     read_past_data();
-    
+    // 4. Create Queue
     data_queue = xQueueCreate(QUEUE_LENGTH, sizeof(vaccine_data_t));
     if (data_queue == NULL)
     {
         ESP_LOGE(TAG_MAIN, "Failed to create queue");
         return;
     }
-    // 2. Create Tasks
+    // 5. Create Tasks
      xTaskCreatePinnedToCore(task_sensor, "Sensor Task", SENSOR_TASK_STACK_SIZE, NULL,5,NULL,1);
      xTaskCreatePinnedToCore(task_storage, "Storage Task", STORAGE_TASK_STACK_SIZE, NULL, 3, NULL, 1);
      ESP_LOGI(TAG_MAIN, "Tasks Created. Main ending (scheduler handles the rest).");
