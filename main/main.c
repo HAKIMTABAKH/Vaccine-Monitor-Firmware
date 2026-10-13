@@ -8,6 +8,9 @@
 #include "esp_spiffs.h"
 #include <sys/stat.h>
 #include <sys/unistd.h>
+#include "nvs_flash.h"
+#include "wifi_connect.h"
+#include "mqtt_app.h"
 
 //---CONSTANTS---//
 #define SENSOR_TASK_STACK_SIZE 4096
@@ -65,6 +68,12 @@ void task_storage(void *pvParametres)
                 ESP_LOGE(TAG_STORAGE, "Failed to open file for writing");
                 continue;
             }
+
+            // 2. SEND to Cloud (New code)
+            // Note: In a real system, we might use a separate 'Cloud Task',
+            // but for now, calling it here works.
+            mqtt_send_data(received_packet.temperature, received_packet.humidity, received_packet.timestamp, received_packet.battery_level, received_packet.status_flags);
+
             // 3. Write Raw Bytes
             // fwrite(pointer_to_data, size_of_one_element, count, file_handle)
             size_t written = fwrite(&received_packet, sizeof(vaccine_data_t), 1, f);
@@ -72,13 +81,6 @@ void task_storage(void *pvParametres)
             // 4. Close immediately to save data
             fclose(f);
 
-            // 5. Verification Log
-            if (written == 1){
-                ESP_LOGI(TAG_STORAGE, "SAVED to Flash: TS %lu | Temp %.2f",
-                         (unsigned long)received_packet.timestamp, received_packet.temperature);
-            } else {
-                ESP_LOGE(TAG_STORAGE, "Failed to write data to file");
-            }
         }
     }
    
@@ -149,19 +151,31 @@ void app_main(void)
 { 
     // ... Logs init ...
     ESP_LOGI(TAG_MAIN, "System Starting: SCCVM-v1");
-    // 1. Create Queue
-    // MOUNT FILESYSTEM FIRST
+
+    // 1. Initialize NVS (Needed for Wi-Fi)
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND){
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+    // 2. Connect to Wi-Fi (Blocking Call - waits until connected)
+    wifi_init_sta();
+
+    mqtt_app_start(); // Start background MQTT task
+
+    // 3. MOUNT FILESYSTEM FIRST
     init_spiffs();
     // NEW: Read history before we start adding new data
     read_past_data();
-    
+    // 4. Create Queue
     data_queue = xQueueCreate(QUEUE_LENGTH, sizeof(vaccine_data_t));
     if (data_queue == NULL)
     {
         ESP_LOGE(TAG_MAIN, "Failed to create queue");
         return;
     }
-    // 2. Create Tasks
+    // 5. Create Tasks
      xTaskCreatePinnedToCore(task_sensor, "Sensor Task", SENSOR_TASK_STACK_SIZE, NULL,5,NULL,1);
      xTaskCreatePinnedToCore(task_storage, "Storage Task", STORAGE_TASK_STACK_SIZE, NULL, 3, NULL, 1);
      ESP_LOGI(TAG_MAIN, "Tasks Created. Main ending (scheduler handles the rest).");
